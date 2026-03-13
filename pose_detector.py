@@ -154,6 +154,18 @@ class PoseDetector:
                 visibility[m_tip] = visibility.get(i_tip, 0.5)
                 visibility[r_tip] = visibility.get(p_tip, 0.5)
 
+        # Crown (39) - Top of head
+        if 0 in landmarks and 11 in landmarks and 12 in landmarks:
+            # Estimate crown by projecting nose (0) upwards from shoulder center
+            nx, ny = landmarks[0]
+            sx, sy = (landmarks[11][0] + landmarks[12][0]) // 2, (landmarks[11][1] + landmarks[12][1]) // 2
+            
+            # Distance from nose to shoulder center used as scale
+            head_scale = np.hypot(nx - sx, ny - sy)
+            # Project crown roughly 40% of that distance above the nose
+            landmarks[39] = (int(nx + (nx - sx) * 0.4), int(ny + (ny - sy) * 0.4))
+            visibility[39] = visibility.get(0, 0.5)
+
         # --- Override with fine hand tracking ---
         if hand_result and hand_result.multi_hand_landmarks:
             for hlms in hand_result.multi_hand_landmarks:
@@ -170,6 +182,22 @@ class PoseDetector:
                         target = p_indices[side_idx]
                         landmarks[target] = (int(hlms.landmark[hd_idx].x * w), int(hlms.landmark[hd_idx].y * h))
                         visibility[target] = 1.0
+
+        # Post-process smoothing to fix hand tracker and fingertip extension jittering
+        sf = self.smoothing_factor
+        isf = 1.0 - sf
+        for idx in list(landmarks.keys()):
+            # Smooth newly created extensions (>=33) and hand tracker overrides
+            if idx >= 33 or visibility.get(idx) == 1.0:
+                cx, cy = landmarks[idx]
+                if idx in self.prev_landmarks:
+                    px, py = self.prev_landmarks[idx]
+                    # Large distance teleports (finding a new hand) should NOT be smoothed
+                    if (cx - px)**2 + (cy - py)**2 < 15000:
+                        cx = px * isf + cx * sf
+                        cy = py * isf + cy * sf
+                self.prev_landmarks[idx] = (cx, cy)
+                landmarks[idx] = (int(cx), int(cy))
 
         mask = result.segmentation_masks[0].numpy_view() if result.segmentation_masks else None
         return PoseResult(landmarks, visibility, mask, True, result)

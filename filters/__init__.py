@@ -1,12 +1,13 @@
-from filters import aura, firecracker, neon, lightning, hologram, bubbles, grid_shadow, animal, magma, prism, stick_figure, extreme, boss, portal, matrix_human, infrared, kinetic_brush, flora_infusion
+from filters import aura, firecracker, neon, lightning, hologram, bubbles, grid_shadow, animal, magma, prism, portal, matrix_human, infrared, kinetic_brush, flora_infusion, energy_master, gravity_pull, positive_energy, magic_spells
 
 # Registry: display name → module with apply(canvas, pose) function
 FILTER_REGISTRY = {
     "Default":      None,          # plain skeleton, no extra filter
-    "Stick Figure": stick_figure,
-    "Boss Mode":    boss,
+    "Magic Spells": magic_spells,
+    "Positive Aura":positive_energy,
+    "Gravity Pull": gravity_pull,
     "Portal":       portal,
-    "Extreme FX":   extreme,
+    "Energy Master":energy_master,
     "Aura":         aura,
     "Neon":        neon,
     "Lightning":   lightning,
