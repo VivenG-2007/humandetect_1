@@ -47,17 +47,20 @@ def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
             smooth_float = cv2.resize(small_mask, (w, h), interpolation=cv2.INTER_LINEAR)
             
             mask = (smooth_float > 0.35).astype(np.uint8) * 255
-            # Draw skeletal hands explicitly so they don't get lost
-            for w_idx, i_idx, p_idx, t_idx in [(15, 19, 17, 21), (16, 20, 18, 22)]:
+            # Draw skeletal hands explicitly so they don't get lost, including new fingertips
+            for w_idx, i_k, i_t, p_k, p_t, t_k, t_t in [(15, 19, 35, 17, 33, 21, 37), (16, 20, 36, 18, 34, 22, 38)]:
                 if w_idx in lm and vis.get(w_idx, 0) > 0.15:
                     cv2.circle(mask, lm[w_idx], 22, 255, -1, cv2.LINE_AA)
-                    if i_idx in lm and vis.get(i_idx, 0) > 0.15:
-                        cv2.line(mask, lm[w_idx], lm[i_idx], 255, 30, cv2.LINE_AA)
-                        cv2.circle(mask, lm[i_idx], 15, 255, -1, cv2.LINE_AA)
-                    if p_idx in lm and vis.get(p_idx, 0) > 0.15:
-                        cv2.line(mask, lm[w_idx], lm[p_idx], 255, 30, cv2.LINE_AA)
-                    if t_idx in lm and vis.get(t_idx, 0) > 0.15:
-                        cv2.line(mask, lm[w_idx], lm[t_idx], 255, 30, cv2.LINE_AA)
+                    if i_k in lm and i_t in lm and vis.get(i_t, 0) > 0.15:
+                        cv2.line(mask, lm[w_idx], lm[i_k], 255, 30, cv2.LINE_AA)
+                        cv2.line(mask, lm[i_k], lm[i_t], 255, 25, cv2.LINE_AA)
+                        cv2.circle(mask, lm[i_t], 15, 255, -1, cv2.LINE_AA)
+                    if p_k in lm and p_t in lm and vis.get(p_t, 0) > 0.15:
+                        cv2.line(mask, lm[w_idx], lm[p_k], 255, 30, cv2.LINE_AA)
+                        cv2.line(mask, lm[p_k], lm[p_t], 255, 20, cv2.LINE_AA)
+                    if t_k in lm and t_t in lm and vis.get(t_t, 0) > 0.15:
+                        cv2.line(mask, lm[w_idx], lm[t_k], 255, 30, cv2.LINE_AA)
+                        cv2.line(mask, lm[t_k], lm[t_t], 255, 25, cv2.LINE_AA)
                         
             kernel = np.ones((5, 5), np.uint8)
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)

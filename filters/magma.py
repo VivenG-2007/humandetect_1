@@ -30,9 +30,10 @@ class Ember:
 _embers = []
 _prev_landmarks = {}
 VIS_THRESHOLD = 0.25
+_magma_base = None
 
 def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
-    global _embers, _prev_landmarks
+    global _embers, _prev_landmarks, _magma_base
     h, w = canvas.shape[:2]
     t = time.time()
     
@@ -50,12 +51,12 @@ def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
             if vis.get(a, 0) < VIS_THRESHOLD or vis.get(b, 0) < VIS_THRESHOLD: continue
             cv2.line(mask, lm[a], lm[b], 255, 35, cv2.LINE_AA)
         
-        # 3. Create Magma Texture
-        # We use a noisy texture that moves over time
-        magma_tex = np.zeros((h, w, 3), dtype=np.uint8)
-        
-        # Base dark orange
-        magma_tex[:,:] = (20, 40, 100) # Deep dark red/orange (BGR)
+        # 3. Create Magma Texture Cache dynamically
+        if _magma_base is None or _magma_base.shape[:2] != (h, w):
+            _magma_base = np.full((h, w, 3), (20, 40, 100), dtype=np.uint8) # Deep dark red/orange
+            
+        # Extract a fresh copy from cache immediately
+        magma_tex = _magma_base.copy()
         
         # Highlight "cracks"
         for i in range(5):

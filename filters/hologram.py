@@ -25,10 +25,8 @@ def apply(canvas: np.ndarray, pose, **kwargs) -> np.ndarray:
     soft_mask = cv2.resize(soft_mask_small, (w, h))
 
     # Color the silhouette
-    body_layer = np.zeros_like(canvas)
     alpha = (soft_mask * 0.6).astype(np.float32)
-    for c in range(3):
-        body_layer[:, :, c] = (hologram_color[c] * alpha).astype(np.uint8)
+    body_layer = (alpha[:, :, np.newaxis] * hologram_color).astype(np.uint8)
 
     # 2. Chromatic Aberration (Shifted ghost layers)
     b, g, r = cv2.split(body_layer)

@@ -38,10 +38,10 @@ def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
                 px = int(cx + np.cos(angle) * r)
                 py = int(cy + np.sin(angle) * r)
                 
-                _spark_system.spawn(px, py, count=1, color_fn=_spark_color, size_range=(1, 3), lifetime_range=(10, 30), speed_scale=2.5)
                 # Give tangential velocity for swirl
                 perp_v = np.array([-np.sin(angle), np.cos(angle)]) * random.uniform(4, 8)
-                _spark_system.particles[-1].velocity = (perp_v[0], perp_v[1])
+                _spark_system.spawn(px, py, count=1, color_fn=_spark_color, size_range=(1, 3), 
+                                    lifetime_range=(10, 30), velocity=(perp_v[0], perp_v[1]))
 
             # Draw a faint glowing ring
             glow_mask = np.zeros_like(canvas)
@@ -76,18 +76,20 @@ def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
             # Threshold into binary
             mask = (smooth_float > 0.4).astype(np.uint8) * 255
             
-            # Force hand tracking (segmentation models often miss fast/thin hands)
+            # Force hand tracking out to newly mapped physical fingertips (All 5 fingers)
             vis = pose.visibility
-            for w_idx, i_idx, p_idx, t_idx in [(15, 19, 17, 21), (16, 20, 18, 22)]:
+            # Hand index layout: wrist, index_t, pinky_t, thumb_t, middle_t, ring_t
+            for w_idx, i_t, p_t, t_t, m_t, r_t in [(15, 35, 33, 37, 40, 42), (16, 36, 34, 38, 41, 43)]:
                 if w_idx in lm and vis.get(w_idx, 0) > 0.15:
-                    cv2.circle(mask, lm[w_idx], 22, 255, -1, cv2.LINE_AA)
-                    if i_idx in lm and vis.get(i_idx, 0) > 0.15:
-                        cv2.line(mask, lm[w_idx], lm[i_idx], 255, 30, cv2.LINE_AA)
-                        cv2.circle(mask, lm[i_idx], 15, 255, -1, cv2.LINE_AA)
-                    if p_idx in lm and vis.get(p_idx, 0) > 0.15:
-                        cv2.line(mask, lm[w_idx], lm[p_idx], 255, 30, cv2.LINE_AA)
-                    if t_idx in lm and vis.get(t_idx, 0) > 0.15:
-                        cv2.line(mask, lm[w_idx], lm[t_idx], 255, 30, cv2.LINE_AA)
+                    # Draw a solid core for the palm
+                    cv2.circle(mask, lm[w_idx], 15, 255, -1, cv2.LINE_AA)
+                    
+                    # Connect all available fingers to the wrist
+                    for f_tip in [i_t, p_t, t_t, m_t, r_t]:
+                        if f_tip in lm and vis.get(f_tip, 0) > 0.15:
+                            # Use a moderate thickness that doesn't blob but stays connected
+                            cv2.line(mask, lm[w_idx], lm[f_tip], 255, 15, cv2.LINE_AA)
+                            cv2.circle(mask, lm[f_tip], 8, 255, -1, cv2.LINE_AA)
             
             # Use CLOSE (fills gaps) instead of OPEN (which deletes fingers)
             kernel = np.ones((5, 5), np.uint8)
@@ -106,25 +108,22 @@ def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
                     cv2.circle(mask, lm[a], 18, 255, -1, cv2.LINE_AA)
                     cv2.circle(mask, lm[b], 18, 255, -1, cv2.LINE_AA)
                     
-            # Add hands to fallback blob
-            for w_idx, i_idx, p_idx, t_idx in [(15, 19, 17, 21), (16, 20, 18, 22)]:
+            # Add full 5-finger hands to fallback blob
+            for w_idx, i_t, p_t, t_t, m_t, r_t in [(15, 35, 33, 37, 40, 42), (16, 36, 34, 38, 41, 43)]:
                 if w_idx in lm and vis.get(w_idx, 0) > 0.15:
-                    cv2.circle(mask, lm[w_idx], 22, 255, -1, cv2.LINE_AA)
-                    if i_idx in lm and vis.get(i_idx, 0) > 0.15:
-                        cv2.line(mask, lm[w_idx], lm[i_idx], 255, 30, cv2.LINE_AA)
-                        cv2.circle(mask, lm[i_idx], 15, 255, -1, cv2.LINE_AA)
-                    if p_idx in lm and vis.get(p_idx, 0) > 0.15:
-                        cv2.line(mask, lm[w_idx], lm[p_idx], 255, 30, cv2.LINE_AA)
-                    if t_idx in lm and vis.get(t_idx, 0) > 0.15:
-                        cv2.line(mask, lm[w_idx], lm[t_idx], 255, 30, cv2.LINE_AA)
+                    cv2.circle(mask, lm[w_idx], 15, 255, -1, cv2.LINE_AA)
+                    for f_tip in [i_t, p_t, t_t, m_t, r_t]:
+                        if f_tip in lm and vis.get(f_tip, 0) > 0.15:
+                            cv2.line(mask, lm[w_idx], lm[f_tip], 255, 15, cv2.LINE_AA)
+                            cv2.circle(mask, lm[f_tip], 8, 255, -1, cv2.LINE_AA)
 
             if 0 in lm and vis.get(0, 0) > 0.25:
                 top_y = int(lm[0][1] - 60)
                 cv2.line(mask, lm[0], (lm[0][0], top_y), 255, 50, cv2.LINE_AA)
                 cv2.circle(mask, (lm[0][0], top_y), 25, 255, -1, cv2.LINE_AA)
                 
-            mask = cv2.GaussianBlur(mask, (31, 31), 0)
-            _, mask = cv2.threshold(mask, 120, 255, cv2.THRESH_BINARY)
+            mask = cv2.GaussianBlur(mask, (15, 15), 0)
+            _, mask = cv2.threshold(mask, 140, 255, cv2.THRESH_BINARY)
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(canvas, contours, -1, (200, 240, 255), 2, cv2.LINE_AA)
 

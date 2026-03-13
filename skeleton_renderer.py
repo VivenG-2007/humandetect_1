@@ -1,21 +1,14 @@
 """
 Skeleton Renderer — draws stick-figure skeleton on a black canvas.
 Handles partial detections gracefully (waist-up, head-only, etc.).
+Optimized for batch drawing and reduced per-frame overhead.
 """
-import cv2
-import numpy as np
-from typing import Optional, Tuple
-from pose_detector import PoseResult, CONNECTIONS
-
-# Visibility threshold below which we skip a landmark / connection
-VIS_THRESHOLD = 0.4
 import cv2
 import numpy as np
 import time
 from typing import Optional, Tuple
 from pose_detector import PoseResult, CONNECTIONS
 
-# Visibility threshold below which we skip a landmark / connection
 VIS_THRESHOLD = 0.45
 
 class SkeletonRenderer:
@@ -33,6 +26,32 @@ class SkeletonRenderer:
         self.line_thickness = line_thickness
         self.joint_radius = joint_radius
         self._start_time = time.time()
+        
+        # Pre-calculate limb connection groups for faster drawing
+        self.limb_connections = [
+            (11, 13), (13, 15), # Left arm
+            (12, 14), (14, 16), # Right arm
+            (15, 17), (17, 33), # Left pinky
+            (15, 19), (19, 35), # Left index
+            (15, 21), (21, 37), # Left thumb
+            (15, 40), (15, 42), # L Middle, L Ring
+            (16, 18), (18, 34), # Right pinky
+            (16, 20), (20, 36), # Right index
+            (16, 22), (22, 38), # Right thumb
+            (16, 41), (16, 43), # R Middle, R Ring
+            (23, 25), (25, 27), # Left leg
+            (24, 26), (26, 28), # Right leg
+            (27, 29), (27, 31), # Left foot
+            (28, 30), (28, 32), # Right foot
+            (11, 12), (23, 24), # Shoulder/Hip lines
+        ]
+        
+        # All tracking indices for nodes
+        self.node_indices = [
+            11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 
+            23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 
+            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43
+        ]
 
     def render(
         self,
@@ -51,74 +70,61 @@ class SkeletonRenderer:
         vis = pose.visibility
         t = time.time() - self._start_time
         
-        # ── Pulsing Glow Alpha ──
-        pulse = (np.sin(t * 4) + 1) / 2 * 0.4 + 0.6 # Pulse between 0.6 and 1.0
+        # Pulsing Glow Alpha (pre-calculated factor)
+        pulse = (np.sin(t * 4) + 1) / 2 * 0.4 + 0.6 
 
-        # 1. DRAW TORSO (Semi-transparent Tech Box)
+        # 1. DRAW TORSO (Batch Poly)
         if all(i in lm and vis.get(i, 0) > VIS_THRESHOLD for i in [11, 12, 23, 24]):
             pts = np.array([lm[11], lm[12], lm[24], lm[23]], np.int32)
-            
-            # Fill torso with dark tech color
             overlay = canvas.copy()
             cv2.fillPoly(overlay, [pts], self.torso_color)
             cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
-            
-            # Draw glowing border for torso
             cv2.polylines(canvas, [pts], True, self.line_color, 1, cv2.LINE_AA)
-            # Outer glow
             cv2.polylines(canvas, [pts], True, self.line_color, 4, cv2.LINE_AA)
 
-        # 2. DRAW LIMBS with Neon Glow
-        limb_connections = [
-            (11, 13), (13, 15), # Left arm
-            (12, 14), (14, 16), # Right arm
-            (23, 25), (25, 27), # Left leg
-            (24, 26), (26, 28), # Right leg
-            (11, 12), (23, 24), # Shoulder/Hip lines
-        ]
-        
-        # Create a glow layer
+        # 2. DRAW LIMBS (Batch Optimized)
         glow_layer = np.zeros_like(canvas)
-        for (a, b) in limb_connections:
+        for (a, b) in self.limb_connections:
             if a in lm and b in lm and vis.get(a, 0) > VIS_THRESHOLD and vis.get(b, 0) > VIS_THRESHOLD:
-                # Main line
-                cv2.line(canvas, lm[a], lm[b], self.line_color, self.line_thickness, cv2.LINE_AA)
-                # Glow effect
-                cv2.line(glow_layer, lm[a], lm[b], self.line_color, self.line_thickness + 6, cv2.LINE_AA)
+                p1, p2 = lm[a], lm[b]
+                cv2.line(canvas, p1, p2, self.line_color, self.line_thickness, cv2.LINE_AA)
+                cv2.line(glow_layer, p1, p2, self.line_color, self.line_thickness + 6, cv2.LINE_AA)
 
-        # Blur the glow layer and add it (optimized for large resolution)
-        glow_small = cv2.resize(glow_layer, (w // 4, h // 4))
-        glow_blur_small = cv2.GaussianBlur(glow_small, (7, 7), 0)
-        glow_blur = cv2.resize(glow_blur_small, (w, h))
-        canvas = cv2.addWeighted(canvas, 1.0, glow_blur, 0.8 * pulse, 0)
+        # Batch Blur Proxy for Glow
+        if np.any(glow_layer):
+            glow_small = cv2.resize(glow_layer, (w // 4, h // 4), interpolation=cv2.INTER_LINEAR)
+            glow_blur_small = cv2.GaussianBlur(glow_small, (7, 7), 0)
+            glow_blur = cv2.resize(glow_blur_small, (w, h), interpolation=cv2.INTER_LINEAR)
+            cv2.addWeighted(canvas, 1.0, glow_blur, 0.8 * pulse, 0, dst=canvas)
 
-        # 3. DRAW HEAD & NECK
+        # 3. DRAW HEAD (Enhanced crown tracking 39)
         if 0 in lm and vis.get(0, 0) > VIS_THRESHOLD:
             head_center = lm[0]
-            radius = 18
-            
             # Neck line
             if 11 in lm and 12 in lm:
-                mid_shoulder = ((lm[11][0] + lm[12][0]) // 2, (lm[11][1] + lm[12][1]) // 2)
-                cv2.line(canvas, head_center, mid_shoulder, self.line_color, 2, cv2.LINE_AA)
-
-            # Circular Tech Head
-            cv2.circle(canvas, head_center, radius, (20, 20, 20), -1, cv2.LINE_AA)
-            cv2.circle(canvas, head_center, radius, self.line_color, 2, cv2.LINE_AA)
-            # Floating "HUD" dots near head
+                mid_sh = ((lm[11][0] + lm[12][0]) // 2, (lm[11][1] + lm[12][1]) // 2)
+                cv2.line(canvas, head_center, mid_sh, self.line_color, 2, cv2.LINE_AA)
+            
+            # Head Circle
+            cv2.circle(canvas, head_center, 18, (20, 20, 20), -1, cv2.LINE_AA)
+            cv2.circle(canvas, head_center, 18, self.line_color, 2, cv2.LINE_AA)
+            
+            # Spine to Crown (39 is top of head)
+            if 39 in lm and vis.get(39, 0) > VIS_THRESHOLD:
+                cv2.line(canvas, head_center, lm[39], self.line_color, 2, cv2.LINE_AA)
+            
+            # HUD details
             for i in range(3):
                 ang = t * 2 + i * (2 * np.pi / 3)
-                dx = int(np.cos(ang) * (radius + 8))
-                dy = int(np.sin(ang) * (radius + 8))
+                dx, dy = int(np.cos(ang) * 26), int(np.sin(ang) * 26)
                 cv2.circle(canvas, (head_center[0] + dx, head_center[1] + dy), 2, self.line_color, -1, cv2.LINE_AA)
 
         # 4. DRAW JOINTS (Tech Nodes)
-        for idx in [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]:
+        for idx in self.node_indices:
             if idx in lm and vis.get(idx, 0) > VIS_THRESHOLD:
-                # Outer ring
-                cv2.circle(canvas, lm[idx], self.joint_radius + 2, self.line_color, 1, cv2.LINE_AA)
-                # Inner dot
-                cv2.circle(canvas, lm[idx], self.joint_radius - 1, self.joint_color, -1, cv2.LINE_AA)
+                pt = lm[idx]
+                cv2.circle(canvas, pt, self.joint_radius + 2, self.line_color, 1, cv2.LINE_AA)
+                cv2.circle(canvas, pt, self.joint_radius - 1, self.joint_color, -1, cv2.LINE_AA)
 
         return canvas
 

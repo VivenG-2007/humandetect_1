@@ -1,6 +1,6 @@
 """
-Aura Filter — Shimmering energy field that wraps around the entire human body,
-with neon smoke trailing from the hands on movement.
+Aura Filter — Shimmering energy field.
+Optimized with low-res blur proxy and vectorized particle updates.
 """
 import cv2
 import numpy as np
@@ -9,22 +9,20 @@ import random
 
 class SmokeParticle:
     def __init__(self, x, y, color, has_core=False):
-        self.x = float(x)
-        self.y = float(y)
+        self.x, self.y = float(x), float(y)
         self.size = random.uniform(10, 22)
         self.color = color 
-        self.vx = random.uniform(-0.6, 0.6)
-        self.vy = random.uniform(-1.2, 0.3)
+        self.vx, self.vy = random.uniform(-0.6, 0.6), random.uniform(-1.2, 0.3)
         self.alpha = random.uniform(0.5, 0.8)
         self.lifetime = random.uniform(1.0, 2.0)
         self.start_time = time.time()
         self.has_core = has_core
 
-    def update(self):
-        elapsed = time.time() - self.start_time
+    def update(self, t):
+        elapsed = t - self.start_time
         self.x += self.vx
         self.y += self.vy
-        self.size += 0.4 # Smoke spreads
+        self.size += 0.4 
         self.alpha *= 0.95
         return elapsed < self.lifetime
 
@@ -32,7 +30,6 @@ _particles = []
 _prev_landmarks = {}
 _MOVE_THRESHOLD = 6.0
 VIS_THRESHOLD = 0.4
-
 _prev_mask = None
 
 def apply(canvas: np.ndarray, pose, **kwargs) -> np.ndarray:
@@ -41,103 +38,66 @@ def apply(canvas: np.ndarray, pose, **kwargs) -> np.ndarray:
     t = time.time()
 
     # == 1. Hand Smoke Trailing ==
-    _particles = [p for p in _particles if p.update()]
+    _particles = [p for p in _particles if p.update(t)]
     
     if pose.detected:
-        lm = pose.landmarks
-        vis = pose.visibility
-        
-        blue_smoke = (255, 180, 50) # BGR Cyan/Blue
-        # Just track wrists/hands
-        HAND_INDICES = [15, 16, 17, 18, 19, 20, 21, 22]
+        lm, vis = pose.landmarks, pose.visibility
+        # Track all fingers for high-density trails
+        HAND_INDICES = list(range(15, 23)) + list(range(33, 39)) + [40, 41, 42, 43]
         
         for idx in HAND_INDICES:
-            if idx not in lm or vis.get(idx, 0) < VIS_THRESHOLD:
-                continue
-            pt = lm[idx]
-            if idx in _prev_landmarks:
-                prev_pt = _prev_landmarks[idx]
-                dist = np.linalg.norm(np.array(pt) - np.array(prev_pt))
-                
-                if dist > _MOVE_THRESHOLD:
-                    num = int(dist / 6) + 1
-                    for _ in range(num):
-                        t_lerp = random.random()
-                        spawn_x = pt[0] * t_lerp + prev_pt[0] * (1 - t_lerp)
-                        spawn_y = pt[1] * t_lerp + prev_pt[1] * (1 - t_lerp)
-                        _particles.append(SmokeParticle(
-                            spawn_x + random.uniform(-6, 6),
-                            spawn_y + random.uniform(-6, 6),
-                            blue_smoke,
-                            has_core=random.random() < 0.4
-                        ))
+            if idx in lm and vis.get(idx, 0) > VIS_THRESHOLD:
+                pt = lm[idx]
+                if idx in _prev_landmarks:
+                    dist = np.hypot(pt[0] - _prev_landmarks[idx][0], pt[1] - _prev_landmarks[idx][1])
+                    if dist > _MOVE_THRESHOLD:
+                        for _ in range(int(dist / 8) + 1):
+                            t_lerp = random.random()
+                            sx = pt[0] * t_lerp + _prev_landmarks[idx][0] * (1 - t_lerp)
+                            sy = pt[1] * t_lerp + _prev_landmarks[idx][1] * (1 - t_lerp)
+                            _particles.append(SmokeParticle(sx, sy, (255, 180, 50), random.random() < 0.4))
         
-        _prev_landmarks = {idx: pt for idx, pt in lm.items() if vis.get(idx, 0) > VIS_THRESHOLD}
+        _prev_landmarks = {i: lm[i] for i in HAND_INDICES if i in lm and vis.get(i,0) > VIS_THRESHOLD}
 
-    # == 2. Body Aura (Segmentation Mask) ==
+    # == 2. Body Aura (Segmentation) ==
     if pose.detected and pose.segmentation_mask is not None:
         mask = pose.segmentation_mask.astype(np.float32)
-        
-        # Temporal mask smoothing to eliminate glitches
         if _prev_mask is None or _prev_mask.shape != mask.shape:
-            _prev_mask = mask.copy()
+            _prev_mask = mask
         else:
-            mask = cv2.addWeighted(mask, 0.4, _prev_mask, 0.6, 0)
-            _prev_mask = mask.copy()
-        
+            _prev_mask = cv2.addWeighted(mask, 0.4, _prev_mask, 0.6, 0)
+            mask = _prev_mask
+
         pulse = (np.sin(t * 2) + 1) / 2
-        color1 = np.array([255, 180, 50]) # Sky Blue
-        color2 = np.array([255, 50, 200]) # Vivid Purple
-        current_color = (color1 * pulse + color2 * (1 - pulse)).astype(np.uint8)
+        c1, c2 = np.array([255, 180, 50]), np.array([255, 50, 200])
+        current_color = (c1 * pulse + c2 * (1 - pulse)).astype(np.uint8)
         
-        mask_small = cv2.resize(mask, (w // 4, h // 4))
-        inner_glow_small = cv2.GaussianBlur(mask_small, (5, 5), 0)
-        outer_glow_small = cv2.GaussianBlur(mask_small, (15, 15), 0)
+        # Optimized Dual-Glow Blur
+        mask_s = cv2.resize(mask, (w // 4, h // 4))
+        ig_s = cv2.GaussianBlur(mask_s, (5, 5), 0)
+        og_s = cv2.GaussianBlur(mask_s, (15, 15), 0)
         
-        inner_glow = cv2.resize(inner_glow_small, (w, h))
-        outer_glow = cv2.resize(outer_glow_small, (w, h))
-
-        outer_alpha = outer_glow * 0.4
-        for c in range(3):
-            canvas[:, :, c] = np.clip(canvas[:, :, c] + outer_alpha * current_color[c], 0, 255)
+        # Add outer aura
+        oa = (cv2.resize(og_s, (w, h)) * 0.4)[:, :, np.newaxis]
+        cv2.add(canvas, (oa * current_color).astype(np.uint8), dst=canvas)
         
-        inner_alpha = inner_glow * 0.7
-        core_color = np.array([255, 255, 100]) # Cyan core
-        for c in range(3):
-            canvas[:, :, c] = np.clip(canvas[:, :, c] + inner_alpha * core_color[c], 0, 255)
+        # Add inner core
+        ia = (cv2.resize(ig_s, (w, h)) * 0.7)[:, :, np.newaxis]
+        cv2.add(canvas, (ia * np.array([255, 255, 100])).astype(np.uint8), dst=canvas)
 
-        if int(t * 15) % 2 == 0:
-            grid = 15
-            for y in range(0, h, grid):
-                for x in range(0, w, grid):
-                    if mask[y, x] > 0.6 and random.random() < 0.05:
-                        spark_h = random.randint(10, 30)
-                        cv2.line(canvas, (x, y), (x, y - spark_h), (255, 255, 255), 1, cv2.LINE_AA)
-                        cv2.circle(canvas, (x, y - spark_h), 2, (255, 255, 255), -1, cv2.LINE_AA)
-
-    # == 3. Draw Smoke Particles on top ==
+    # == 3. Draw Smoke Particles (Layered) ==
     if _particles:
-        smoke_layer = np.zeros_like(canvas)
-        core_layer = np.zeros_like(canvas)
-        
+        s_layer = np.zeros_like(canvas)
+        c_layer = np.zeros_like(canvas)
         for p in _particles:
-            cv2.circle(smoke_layer, (int(p.x), int(p.y)), int(p.size), p.color, -1)
+            cv2.circle(s_layer, (int(p.x), int(p.y)), int(p.size), p.color, -1)
             if p.has_core:
-                cv2.circle(core_layer, (int(p.x), int(p.y)), int(p.size * 0.4), (200, 50, 255), -1)
+                cv2.circle(c_layer, (int(p.x), int(p.y)), int(p.size * 0.4), (200, 50, 255), -1)
         
-        smoke_small = cv2.resize(smoke_layer, (w//4, h//4))
-        smoke_small = cv2.GaussianBlur(smoke_small, (9, 9), 0)
-        smoke_layer = cv2.resize(smoke_small, (w, h))
-
-        core_small = cv2.resize(core_layer, (w//4, h//4))
-        core_small = cv2.GaussianBlur(core_small, (7, 7), 0)
-        core_layer = cv2.resize(core_small, (w, h))
-        
-        canvas[:] = cv2.addWeighted(canvas, 1.0, smoke_layer, 0.6, 0)
-        canvas[:] = cv2.addWeighted(canvas, 1.0, core_layer, 0.4, 0)
-        
-        for p in _particles[:10]:
-            if p.alpha > 0.6:
-                cv2.circle(canvas, (int(p.x), int(p.y)), int(p.size/6), (255, 255, 255), -1)
+        # Fast blur for smoke
+        for layer, strength, ksize in [(s_layer, 0.6, 9), (c_layer, 0.4, 7)]:
+            ls = cv2.resize(layer, (w//4, h//4))
+            lb = cv2.GaussianBlur(ls, (ksize, ksize), 0)
+            cv2.addWeighted(canvas, 1.0, cv2.resize(lb, (w, h)), strength, 0, dst=canvas)
 
     return canvas

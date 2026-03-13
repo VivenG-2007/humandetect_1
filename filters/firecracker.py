@@ -35,32 +35,25 @@ def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
             contours, _ = cv2.findContours(mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             
             edge_points = []
-            for cnt in contours:
-                for pt in cnt:
-                    edge_points.append(pt[0])
+            if contours:
+                edge_points = np.vstack(contours).squeeze(1)
                     
             if len(edge_points) > 50:
                 # High Density Spawning: Sample a massive chunk of the boundary every frame
-                num_spawns = max(40, len(edge_points) // 15)
+                num_spawns = min(400, len(edge_points) // 10) # Increased density for optimized engine
+                sampled = edge_points[np.random.choice(len(edge_points), size=num_spawns, replace=False)]
                 
-                # Rapid batch picking
-                sampled_indices = np.random.choice(len(edge_points), size=num_spawns, replace=False)
+                # Apply spatial jitter vectorized (+- 6 pixels wide)
+                jittered_pts = sampled + np.random.randint(-6, 7, sampled.shape)
                 
-                for idx in sampled_indices:
-                    pt = edge_points[idx]
-                    
-                    # Apply a spatial jitter so the outline is physically "Thick" (+- 6 pixels wide)
-                    jx = pt[0] + random.randint(-6, 6)
-                    jy = pt[1] + random.randint(-6, 6)
-                    
-                    _system.spawn(
-                        jx, jy,
-                        count=1,
-                        color_fn=_fire_color,
-                        size_range=(1, 3),        
-                        lifetime_range=(12, 25),  
-                        speed_scale=0.8,          
-                    )
+                _system.spawn_batch(
+                    jittered_pts,
+                    count_per_point=1,
+                    color_fn=_fire_color,
+                    size_range=(1, 3),
+                    lifetime_range=(12, 25),
+                    speed_scale=0.8
+                )
                 
                 # Occasional slight cluster at an edge string to make it pop organically
                 if random.random() < 0.20:

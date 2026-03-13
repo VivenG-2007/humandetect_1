@@ -50,13 +50,13 @@ def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
             # Mirrored: user's right shoulder (12) is on left of screen (-X). We want it to point LEFT (-X), so side should be -1.
             # User's left shoulder (11) is on right of screen (+X). We want it to point RIGHT (+X), so side should be 1.
             anchor = sh_r if side == -1 else sh_l
-            wrist = get_pt(16) if side == -1 else get_pt(15)
+            hand_tip = get_pt(36) if side == -1 else get_pt(35) # Using index fingertips instead of wrists
             
             hand_flap = 0.0
-            if wrist is not None:
+            if hand_tip is not None:
                 # Calculate hand elevation relative to shoulder
-                dy = wrist[1] - anchor[1]
-                dx = wrist[0] - anchor[0]
+                dy = hand_tip[1] - anchor[1]
+                dx = hand_tip[0] - anchor[0]
                 dist = np.hypot(dx, dy)
                 if dist > 5:
                     norm_y = dy / dist # 1 = straight down, -1 = straight up

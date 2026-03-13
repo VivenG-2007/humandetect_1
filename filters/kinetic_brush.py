@@ -1,91 +1,125 @@
 """
-Kinetic Brushstrokes Filter
-Every movement generates animated, trailing paint strokes following the trajectory of major cinematic limbs.
+Kinetic Brushstrokes Filter - Pro Smooth Edition
+Every movement generates an artistic, trailing paint stroke with sub-pixel interpolation.
 """
 import cv2
 import numpy as np
 from collections import deque
+import time
 from pose_detector import PoseResult
 
-# Track trajectories for massive structural nodes: Hands, feet, head
-_TRACKED_POINTS = [0, 15, 16, 27, 28]
-_trajectories = {}
-_MAX_HISTORY = 35 # Length of the paint smear
+# Config
+_TRACKED_POINTS = [0, 35, 36] # Head, Left Index Tip, Right Index Tip
+_trajectories   = {}
+_smoothed_lms   = {}
+_MAX_HISTORY    = 30 
+_SMOOTH_FACTOR  = 0.75 # EMA factor (0.0 to 1.0). Higher = more responsive, lower = steadier.
 
 def get_color(idx):
+    # Vibrant artistic palette
     colors = [
-        (255, 200, 50),   # Cyan for head
-        (50, 255, 255),   # Yellow for Right Hand
-        (255, 50, 255),   # Magenta for Left Hand
-        (50, 50, 255),    # Red for Left Foot
-        (255, 100, 100)   # Blue/Purple for Right Foot
+        (255, 180, 50),   # Cyan-ish
+        (50, 255, 255),   # Yellow
+        (220, 50, 255),   # Pink/Magenta
+        (100, 100, 255),  # Soft Blue
+        (50, 255, 150),   # Mint
+        (50, 150, 255),   # Orange
+        (255, 100, 100)   # Purple
     ]
     return colors[idx % len(colors)]
 
 def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
-    global _trajectories
+    global _trajectories, _smoothed_lms
     
-    # 1. Dark artistic background
+    h, w = canvas.shape[:2]
+    
+    # 1. Background: Muted grayscale
     original = kwargs.get('original_frame')
     if original is not None:
         gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
-        canvas[:] = cv2.merge([(gray*0.2).astype(np.uint8)]*3)
+        # Fast muted background
+        canvas[:] = (gray // 6)[:, :, np.newaxis]
     else:
-        canvas[:] = (20, 20, 20)
+        canvas[:] = (12, 12, 15)
 
     if not pose.detected:
         for idx in _trajectories:
-            if len(_trajectories[idx]) > 0:
+            if _trajectories[idx]:
                 _trajectories[idx].popleft()
     else:
         lm = pose.landmarks
         vis = pose.visibility
         
         for idx in _TRACKED_POINTS:
+            if idx not in lm or vis.get(idx, 0) < 0.35:
+                if idx in _trajectories and _trajectories[idx]:
+                    _trajectories[idx].popleft()
+                continue
+            
+            # EMA Smoothing for jitter reduction
+            curr_pt = np.array(lm[idx], dtype=np.float32)
+            if idx not in _smoothed_lms:
+                _smoothed_lms[idx] = curr_pt
+            else:
+                _smoothed_lms[idx] = _smoothed_lms[idx] * (1.0 - _SMOOTH_FACTOR) + curr_pt * _SMOOTH_FACTOR
+            
             if idx not in _trajectories:
                 _trajectories[idx] = deque(maxlen=_MAX_HISTORY)
             
-            if idx in lm and vis.get(idx, 0) > 0.4:
-                _trajectories[idx].append(lm[idx])
-            else:
-                if len(_trajectories[idx]) > 0:
-                    _trajectories[idx].popleft()
+            _trajectories[idx].append(_smoothed_lms[idx].copy())
 
-    # 2. Draw thick, tapering Splines / Paint strokes
-    paint_layer = np.zeros_like(canvas)
+    # 2. Draw Tapered, Interpolated Strokes
+    sw, sh = w // 2, h // 2
+    paint_layer = np.zeros((sh, sw, 3), dtype=np.uint8)
     
     for i, idx in enumerate(_TRACKED_POINTS):
-        points = list(_trajectories.get(idx, []))
-        if len(points) < 2:
+        pts = list(_trajectories.get(idx, []))
+        if len(pts) < 2:
             continue
             
         color = get_color(i)
+        num_pts = len(pts)
         
-        # Tapering filled circles logic mimics oil paint brush physics
-        num_points = len(points)
-        for j in range(num_points - 1):
-            pt1 = points[j]
-            pt2 = points[j+1]
+        for j in range(num_pts - 1):
+            p1 = pts[j]
+            p2 = pts[j+1]
             
-            # Head of the array (later index) is max thickness
-            progress = (j + 1) / num_points
-            thickness = int(45 * progress) + 3
+            # Calculate tapering thickness for this segment
+            # j=0 is tail, j=num_pts-2 is head
+            prog1 = j / (num_pts - 1)
+            prog2 = (j + 1) / (num_pts - 1)
             
-            # Stepwise interpolation filling gaps between frames
-            dist = int(np.hypot(pt2[0]-pt1[0], pt2[1]-pt1[1]))
-            steps = max(dist // 2, 1)
-            for s in range(steps):
-                t = s / steps
-                ix = int(pt1[0] + (pt2[0] - pt1[0]) * t)
-                iy = int(pt1[1] + (pt2[1] - pt1[1]) * t)
-                cv2.circle(paint_layer, (ix, iy), thickness//2, color, -1, cv2.LINE_AA)
+            thick1 = int(24 * (prog1 ** 1.8)) + 1
+            thick2 = int(24 * (prog2 ** 1.8)) + 1
+            
+            # Sub-segment interpolation to ensure curved smoothness
+            dist = np.linalg.norm(p2 - p1)
+            # 1 step per 3 pixels of movement at half-res
+            num_steps = max(1, int(dist / 6)) 
+            
+            for s in range(num_steps):
+                f1 = s / num_steps
+                f2 = (s + 1) / num_steps
+                
+                # Interpolate position
+                seg_p1 = (p1 * (1 - f1) + p2 * f1) / 2
+                seg_p2 = (p1 * (1 - f2) + p2 * f2) / 2
+                
+                # Interpolate thickness
+                seg_thick = int(thick1 * (1 - f1) + thick2 * f1)
+                
+                sp1 = (int(seg_p1[0]), int(seg_p1[1]))
+                sp2 = (int(seg_p2[0]), int(seg_p2[1]))
+                
+                cv2.line(paint_layer, sp1, sp2, color, seg_thick, cv2.LINE_AA)
+                if s == num_steps - 1: # Cap the joint
+                    cv2.circle(paint_layer, sp2, seg_thick // 2, color, -1, cv2.LINE_AA)
 
-    # FAST BLUR: Downscale to proxy resolution to evaluate heavy brush liquefaction logic
-    small_paint = cv2.resize(paint_layer, (0, 0), fx=0.5, fy=0.5, interpolation=cv2.INTER_LINEAR)
-    small_blur = cv2.GaussianBlur(small_paint, (7, 7), 0)
-    smoothed_paint = cv2.resize(small_blur, (canvas.shape[1], canvas.shape[0]), interpolation=cv2.INTER_LINEAR)
+    # 3. Post-Process 'Bleed'
+    paint_blur = cv2.GaussianBlur(paint_layer, (3, 3), 0)
+    smoothed_paint = cv2.resize(paint_blur, (w, h), interpolation=cv2.INTER_LINEAR)
     
-    # Additive Blend for neon acrylic intensity
-    canvas[:] = cv2.addWeighted(canvas, 1.0, smoothed_paint, 1.0, 0)
+    # Additive Blend
+    cv2.add(canvas, smoothed_paint, dst=canvas)
 
     return canvas

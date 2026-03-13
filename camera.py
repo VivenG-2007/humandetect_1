@@ -4,6 +4,7 @@ Emits a Qt signal for each new frame so the UI can update safely.
 """
 import cv2
 import numpy as np
+import time
 from typing import Optional
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -44,7 +45,9 @@ class CameraThread(QThread):
                 # Run detection in the background thread
                 pose = None
                 if self.detector:
-                    pose = self.detector.detect(frame)
+                    # Calculate monotonic timestamp in milliseconds for MediaPipe
+                    timestamp_ms = int(time.time() * 1000)
+                    pose = self.detector.detect(frame, timestamp_ms)
                 
                 self.frame_ready.emit(frame, pose)
 

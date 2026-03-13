@@ -23,29 +23,30 @@ class FallingLeaf:
 _leaves = []
 
 def draw_vine(img, pt1, pt2, thickness, color):
-    # Draw a wobbly bezier/spline to emulate organic vine growth mechanics
     dist = np.hypot(pt2[0]-pt1[0], pt2[1]-pt1[1])
     if dist < 5:
         cv2.line(img, pt1, pt2, color, thickness, cv2.LINE_AA)
         return
         
-    pts = [pt1]
     segments = int(dist // 15) + 2
-    for i in range(1, segments):
-        t = i / segments
-        mx = pt1[0] + (pt2[0]-pt1[0])*t
-        my = pt1[1] + (pt2[1]-pt1[1])*t
-        
-        # Add organic sine wobble for natural irregularities
-        offset_amp = 8
-        wx = mx + math.sin(t * math.pi * 4 + pt1[0]) * offset_amp
-        wy = my + math.cos(t * math.pi * 4 + pt1[1]) * offset_amp
-        pts.append((int(wx), int(wy)))
-        
-    pts.append(pt2)
+    t = np.linspace(0, 1, segments)
     
-    for i in range(len(pts)-1):
-        cv2.line(img, pts[i], pts[i+1], color, thickness, cv2.LINE_AA)
+    # Vectorized interpolation
+    mx = pt1[0] + (pt2[0]-pt1[0]) * t
+    my = pt1[1] + (pt2[1]-pt1[1]) * t
+    
+    # Vectorized organic wobble
+    offset_amp = 8
+    wx = mx + np.sin(t * np.pi * 4 + pt1[0]) * offset_amp
+    wy = my + np.cos(t * np.pi * 4 + pt1[1]) * offset_amp
+    
+    # Ensure exact endpoints
+    wx[0], wy[0] = pt1[0], pt1[1]
+    wx[-1], wy[-1] = pt2[0], pt2[1]
+    
+    # Combine and draw instantly as a single polyline
+    pts = np.stack([wx, wy], axis=1).astype(np.int32)
+    cv2.polylines(img, [pts], False, color, thickness, cv2.LINE_AA)
 
 def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
     global _leaves
