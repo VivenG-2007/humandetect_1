@@ -7,9 +7,6 @@ import numpy as np
 import random
 import time
 from pose_detector import PoseResult, CONNECTIONS
-from skeleton_renderer import SkeletonRenderer
-
-_renderer = SkeletonRenderer()
 
 class Bubble:
     def __init__(self, x, y, size, color, speed_y, speed_x):
@@ -100,8 +97,13 @@ def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
     for b in _bubbles:
         b.draw(canvas)
         
-    # Draw Stick Figure
+    # Draw floating wrists (no fingers)
     if pose.detected:
-        _renderer.render(pose, (canvas.shape[0], canvas.shape[1]), canvas)
+        lm, vis = pose.landmarks, pose.visibility
+        color = (255, 230, 200) # Soft bubble color
+        for w_idx in [15, 16]:
+            if w_idx in lm and vis.get(w_idx, 0) > 0.15:
+                cv2.circle(canvas, lm[w_idx], 12, color, -1, cv2.LINE_AA)
+                cv2.circle(canvas, lm[w_idx], 18, (255, 255, 255), 2, cv2.LINE_AA)
 
     return canvas

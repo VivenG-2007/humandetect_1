@@ -1,4 +1,4 @@
-from filters import aura, firecracker, neon, lightning, hologram, bubbles, galaxy, grid_shadow, animal, magma, prism, cyber_wings, stick_figure, extreme, boss, portal, matrix_human
+from filters import aura, firecracker, neon, lightning, hologram, bubbles, grid_shadow, animal, magma, prism, stick_figure, extreme, boss, portal, matrix_human, infrared, kinetic_brush, hologram_skeleton, flora_infusion
 
 # Registry: display name → module with apply(canvas, pose) function
 FILTER_REGISTRY = {
@@ -13,13 +13,15 @@ FILTER_REGISTRY = {
     "Firecracker": firecracker,
     "Hologram":    hologram,
     "Bubbles":     bubbles,
-    "Galaxy":      galaxy,
     "Grid Shadow": grid_shadow,
     "Animal":      animal,
     "Magma":       magma,
     "Prism":       prism,
-    "Cyber Wings": cyber_wings,
+    "Hologram Skel": hologram_skeleton,
+    "Kinetic Brush": kinetic_brush,
+    "Flora Infusion": flora_infusion,
     "Matrix Human": matrix_human,
+    "Infrared":    infrared,
 }
 
 FILTER_NAMES = list(FILTER_REGISTRY.keys())

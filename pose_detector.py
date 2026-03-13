@@ -32,6 +32,12 @@ LANDMARK_NAMES = {
     14: "right_elbow",
     15: "left_wrist",
     16: "right_wrist",
+    17: "left_pinky",
+    18: "right_pinky",
+    19: "left_index",
+    20: "right_index",
+    21: "left_thumb",
+    22: "right_thumb",
     23: "left_hip",
     24: "right_hip",
     25: "left_knee",
@@ -48,14 +54,18 @@ LANDMARK_NAMES = {
 CONNECTIONS = [
     # Torso
     (11, 12), (11, 23), (12, 24), (23, 24),
-    # Left arm
+    # Left arm & hand
     (11, 13), (13, 15),
-    # Right arm
+    (15, 17), (15, 19), (15, 21),  # L wrist to pinky, index, thumb
+    # Right arm & hand
     (12, 14), (14, 16),
-    # Left leg
+    (16, 18), (16, 20), (16, 22),  # R wrist to pinky, index, thumb
+    # Left leg & foot
     (23, 25), (25, 27),
-    # Right leg
+    (27, 29), (27, 31),  # L ankle to heel, foot index
+    # Right leg & foot
     (24, 26), (26, 28),
+    (28, 30), (28, 32),  # R ankle to heel, foot index
     # Head to shoulders
     (0, 11), (0, 12),
 ]

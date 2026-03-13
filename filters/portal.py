@@ -9,6 +9,7 @@ from pose_detector import PoseResult, CONNECTIONS
 from utils.particle_system import ParticleSystem
 
 _spark_system = ParticleSystem(max_particles=800)
+_temporal_mask = None
 
 def _spark_color():
     # Bright orange/gold sparks
@@ -53,17 +54,50 @@ def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
             
             cv2.addWeighted(canvas, 1.0, glow_mask, 0.6, 0, dst=canvas)
 
-        # Extract the true human outline using the segmentation mask
+        # Extract the true human silhouette using the segmentation mask
         if getattr(pose, 'segmentation_mask', None) is not None:
             mask_float = pose.segmentation_mask
             if mask_float.shape[:2] != (h, w):
                 mask_float = cv2.resize(mask_float, (w, h), interpolation=cv2.INTER_LINEAR)
-            # Binary threshold and smooth to keep the contour elegant
-            mask = (mask_float > 0.5).astype(np.uint8) * 255
-            mask = cv2.GaussianBlur(mask, (5, 5), 0)
-            _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+            
+            # Use temporal smoothing to prevent the edge glitching
+            global _temporal_mask
+            if _temporal_mask is None or _temporal_mask.shape != mask_float.shape:
+                _temporal_mask = mask_float.copy()
+            else:
+                # Blend gracefully over time to completely kill any flicker
+                cv2.addWeighted(_temporal_mask, 0.8, mask_float, 0.2, 0, dst=_temporal_mask)
+                
+            # Fast Downscale Blur to stop segmentation flickering without CPU lag
+            small_mask = cv2.resize(_temporal_mask, (0, 0), fx=0.5, fy=0.5, interpolation=cv2.INTER_LINEAR)
+            small_mask = cv2.GaussianBlur(small_mask, (7, 7), 0)
+            smooth_float = cv2.resize(small_mask, (w, h), interpolation=cv2.INTER_LINEAR)
+            
+            # Threshold into binary
+            mask = (smooth_float > 0.4).astype(np.uint8) * 255
+            
+            # Force hand tracking (segmentation models often miss fast/thin hands)
+            vis = pose.visibility
+            for w_idx, i_idx, p_idx, t_idx in [(15, 19, 17, 21), (16, 20, 18, 22)]:
+                if w_idx in lm and vis.get(w_idx, 0) > 0.15:
+                    cv2.circle(mask, lm[w_idx], 22, 255, -1, cv2.LINE_AA)
+                    if i_idx in lm and vis.get(i_idx, 0) > 0.15:
+                        cv2.line(mask, lm[w_idx], lm[i_idx], 255, 30, cv2.LINE_AA)
+                        cv2.circle(mask, lm[i_idx], 15, 255, -1, cv2.LINE_AA)
+                    if p_idx in lm and vis.get(p_idx, 0) > 0.15:
+                        cv2.line(mask, lm[w_idx], lm[p_idx], 255, 30, cv2.LINE_AA)
+                    if t_idx in lm and vis.get(t_idx, 0) > 0.15:
+                        cv2.line(mask, lm[w_idx], lm[t_idx], 255, 30, cv2.LINE_AA)
+            
+            # Use CLOSE (fills gaps) instead of OPEN (which deletes fingers)
+            kernel = np.ones((5, 5), np.uint8)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(canvas, contours, -1, (200, 240, 255), 2, cv2.LINE_AA)
+            
         else:
-            # Fallback skeleton blob if segmentation isn't supported by the model
+            # Fallback to metaball skeleton
             vis = pose.visibility
             mask = np.zeros((h, w), dtype=np.uint8)
             for (a, b) in CONNECTIONS:
@@ -71,18 +105,28 @@ def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
                     cv2.line(mask, lm[a], lm[b], 255, 36, cv2.LINE_AA)
                     cv2.circle(mask, lm[a], 18, 255, -1, cv2.LINE_AA)
                     cv2.circle(mask, lm[b], 18, 255, -1, cv2.LINE_AA)
+                    
+            # Add hands to fallback blob
+            for w_idx, i_idx, p_idx, t_idx in [(15, 19, 17, 21), (16, 20, 18, 22)]:
+                if w_idx in lm and vis.get(w_idx, 0) > 0.15:
+                    cv2.circle(mask, lm[w_idx], 22, 255, -1, cv2.LINE_AA)
+                    if i_idx in lm and vis.get(i_idx, 0) > 0.15:
+                        cv2.line(mask, lm[w_idx], lm[i_idx], 255, 30, cv2.LINE_AA)
+                        cv2.circle(mask, lm[i_idx], 15, 255, -1, cv2.LINE_AA)
+                    if p_idx in lm and vis.get(p_idx, 0) > 0.15:
+                        cv2.line(mask, lm[w_idx], lm[p_idx], 255, 30, cv2.LINE_AA)
+                    if t_idx in lm and vis.get(t_idx, 0) > 0.15:
+                        cv2.line(mask, lm[w_idx], lm[t_idx], 255, 30, cv2.LINE_AA)
+
             if 0 in lm and vis.get(0, 0) > 0.25:
                 top_y = int(lm[0][1] - 60)
                 cv2.line(mask, lm[0], (lm[0][0], top_y), 255, 50, cv2.LINE_AA)
                 cv2.circle(mask, (lm[0][0], top_y), 25, 255, -1, cv2.LINE_AA)
+                
             mask = cv2.GaussianBlur(mask, (31, 31), 0)
             _, mask = cv2.threshold(mask, 120, 255, cv2.THRESH_BINARY)
-        
-        # Find the smooth continuous outer boundary
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Draw the glowing outline
-        cv2.drawContours(canvas, contours, -1, (200, 240, 255), 2, cv2.LINE_AA)
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(canvas, contours, -1, (200, 240, 255), 2, cv2.LINE_AA)
 
     _spark_system.draw(canvas)
     
