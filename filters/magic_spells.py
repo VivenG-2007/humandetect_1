@@ -32,14 +32,14 @@ from pose_detector import PoseResult
 VIS               = 0.30    # minimum landmark visibility
 
 # Shield
-SHIELD_GROW       = 0.20    # lerp speed expanding
+SHIELD_GROW       = 0.10    # buttery smooth growth
 SHIELD_SHRINK     = 0.75    # decay multiplier when inactive
 SHIELD_COLOR      = (255, 200, 50)    # BGR gold-cyan
 SHIELD_GLOW       = (200, 100,  0)    # darker for hex cells
 SHIELD_EDGE       = (200, 240, 255)   # bright rim highlight
 
 # Rune circle
-RUNE_GROW         = 0.22
+RUNE_GROW         = 0.12
 RUNE_SHRINK       = 0.72
 RUNE_SYMBOLS      = list("ᚠᚢᚦᚨᚱᚲᚷᚹᚺᚾᛁᛃᛇᛈᛉᛊᛏᛒᛖᛗᛚᛜᛞᛟ")
 RUNE_COLORS       = [(0, 130, 255), (0, 190, 255), (30, 240, 210)]  # orange tiers
@@ -55,8 +55,8 @@ BEAM_CORE         = (255, 255, 255)
 BEAM_GLOW         = (200,  60, 255)   # purple-pink lightning
 
 # Gesture stability
-HISTORY_LEN       = 5
-VOTES_NEEDED      = 3
+HISTORY_LEN       = 10
+VOTES_NEEDED      = 7
 
 # Ambient particles
 NUM_AMBIENT       = 150

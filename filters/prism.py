@@ -32,18 +32,9 @@ def apply(canvas: np.ndarray, pose: PoseResult, **kwargs) -> np.ndarray:
         # (This gives the entire body silhouette instead of just skeleton lines)
         if getattr(pose, 'segmentation_mask', None) is not None:
             mask_float = pose.segmentation_mask
-            if mask_float.shape[:2] != (h, w):
-                mask_float = cv2.resize(mask_float, (w, h), interpolation=cv2.INTER_LINEAR)
-            
-            # Temporal Smoothing to stop edge flickering
-            global _temporal_mask
-            if '_temporal_mask' not in globals() or _temporal_mask is None or _temporal_mask.shape != mask_float.shape:
-                _temporal_mask = mask_float.copy()
-            else:
-                cv2.addWeighted(_temporal_mask, 0.8, mask_float, 0.2, 0, dst=_temporal_mask)
-            # FAST BLUR: Temporal Smoothing without crushing FPS
-            small_mask = cv2.resize(_temporal_mask, (0, 0), fx=0.5, fy=0.5, interpolation=cv2.INTER_LINEAR)
-            small_mask = cv2.GaussianBlur(small_mask, (7, 7), 0)
+            # Segmentation mask from PoseResult is now temporally smoothed globally.
+            small_mask = cv2.resize(mask_float, (0, 0), fx=0.25, fy=0.25, interpolation=cv2.INTER_LINEAR)
+            small_mask = cv2.GaussianBlur(small_mask, (11, 11), 0)
             smooth_float = cv2.resize(small_mask, (w, h), interpolation=cv2.INTER_LINEAR)
             
             mask = (smooth_float > 0.35).astype(np.uint8) * 255

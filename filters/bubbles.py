@@ -23,14 +23,14 @@ _WOBBLE_CONFIG = np.zeros((0, 2), dtype=np.float32)
 # ── Trail state ───────────────────────────────────────────────────────────────
 _TRAIL_LEFT    = []
 _TRAIL_RIGHT   = []
-TRAIL_MAX_LEN  = 15
+TRAIL_MAX_LEN  = 25
 TRAIL_FADE_SEC = 0.3
 
 # ── Config ────────────────────────────────────────────────────────────────────
 _prev_landmarks     = {}
 _last_spawn_time    = {35: 0.0, 36: 0.0}
 
-STRICT_MOVE         = 65.0    # px — extreme threshold to kill jitter
+STRICT_MOVE         = 25.0    # Smoother emission with stabilized landmarks
 MAX_TELEPORT        = 200.0   # ignore large tracking jumps
 MAX_BUBBLES         = 1500    # high cap for multiple bursts
 VIS_THRESHOLD       = 0.60    # very strict visibility for spawning

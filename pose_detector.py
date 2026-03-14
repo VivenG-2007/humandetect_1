@@ -11,6 +11,7 @@ from typing import Dict, Optional, Tuple, List
 from dataclasses import dataclass
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.vision import PoseLandmarkerOptions, RunningMode
+from utils.smoothing import PointSmoothing, MaskSmoothing
 
 # Explicit landmark IDs for key joints
 # 0-32: standard MediaPipe Pose
@@ -61,6 +62,8 @@ class PoseDetector:
         smoothing_factor: float = 0.45
     ):
         self.smoothing_factor = smoothing_factor
+        self.points_filters: Dict[int, PointSmoothing] = {}
+        self.mask_filter = MaskSmoothing(alpha=0.4) # Slightly aggressive for smoothness
         self.prev_landmarks: Dict[int, Tuple[float, float]] = {}
         
         # Base Pose Landmarker Options
@@ -102,21 +105,18 @@ class PoseDetector:
         landmarks: Dict[int, Tuple[int, int]] = {}
         visibility: Dict[int, float] = {}
         
-        # Faster dictionary building with smoothing
-        sf = self.smoothing_factor
-        isf = 1.0 - sf
-        
         for idx in range(min(33, len(lm_list))):
             lm = lm_list[idx]
             cx, cy = lm.x * w, lm.y * h
             
-            if idx in self.prev_landmarks:
-                px, py = self.prev_landmarks[idx]
-                cx = px * isf + cx * sf
-                cy = py * isf + cy * sf
+            # Use One Euro Filter for primary landmarks
+            if idx not in self.points_filters:
+                self.points_filters[idx] = PointSmoothing(min_cutoff=0.5, beta=0.01)
             
-            self.prev_landmarks[idx] = (cx, cy)
+            cx, cy = self.points_filters[idx](cx, cy)
+            
             landmarks[idx] = (int(cx), int(cy))
+            self.prev_landmarks[idx] = (cx, cy)
             visibility[idx] = lm.visibility
 
 
@@ -184,22 +184,26 @@ class PoseDetector:
                         visibility[target] = 1.0
 
         # Post-process smoothing to fix hand tracker and fingertip extension jittering
-        sf = self.smoothing_factor
-        isf = 1.0 - sf
         for idx in list(landmarks.keys()):
             # Smooth newly created extensions (>=33) and hand tracker overrides
             if idx >= 33 or visibility.get(idx) == 1.0:
                 cx, cy = landmarks[idx]
+                if idx not in self.points_filters:
+                    self.points_filters[idx] = PointSmoothing(min_cutoff=0.8, beta=0.02)
+                
+                # Check for large distance teleports to avoid "dragging" landmarks when switching hands
                 if idx in self.prev_landmarks:
                     px, py = self.prev_landmarks[idx]
-                    # Large distance teleports (finding a new hand) should NOT be smoothed
-                    if (cx - px)**2 + (cy - py)**2 < 15000:
-                        cx = px * isf + cx * sf
-                        cy = py * isf + cy * sf
-                self.prev_landmarks[idx] = (cx, cy)
+                    if (cx - px)**2 + (cy - py)**2 > 15000:
+                        # Reset filter on teleport
+                        self.points_filters[idx] = PointSmoothing(min_cutoff=0.8, beta=0.02)
+                
+                cx, cy = self.points_filters[idx](cx, cy)
                 landmarks[idx] = (int(cx), int(cy))
+                self.prev_landmarks[idx] = (cx, cy)
 
-        mask = result.segmentation_masks[0].numpy_view() if result.segmentation_masks else None
+        raw_mask = result.segmentation_masks[0].numpy_view() if result.segmentation_masks else None
+        mask = self.mask_filter(raw_mask)
         return PoseResult(landmarks, visibility, mask, True, result)
 
     def close(self):

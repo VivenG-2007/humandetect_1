@@ -12,17 +12,18 @@ def apply(canvas: np.ndarray, pose, **kwargs) -> np.ndarray:
         return canvas
 
     h, w = canvas.shape[:2]
-    mask = pose.segmentation_mask
     t = time.time()
     
     # 1. Base Hologram Silhouette
     # Use mask to extract the body shape
     hologram_color = (255, 180, 50) # BGR Cyan/Blue
     
-    # Create a soft body silhouette from the mask
-    mask_small = cv2.resize(mask, (w // 4, h // 4))
-    soft_mask_small = cv2.GaussianBlur(mask_small, (11, 11), 0)
-    soft_mask = cv2.resize(soft_mask_small, (w, h))
+    # Segmentation mask from PoseResult is now temporally smoothed globally.
+    # We add an extra layer of soft blurring for a "Prism" feel.
+    mask_float = pose.segmentation_mask.astype(np.float32) / 255.0
+    small_mask = cv2.resize(mask_float, (0, 0), fx=0.25, fy=0.25, interpolation=cv2.INTER_LINEAR)
+    small_mask = cv2.GaussianBlur(small_mask, (15, 15), 0)
+    soft_mask = cv2.resize(small_mask, (w, h), interpolation=cv2.INTER_LINEAR)
 
     # Color the silhouette
     alpha = (soft_mask * 0.6).astype(np.float32)
